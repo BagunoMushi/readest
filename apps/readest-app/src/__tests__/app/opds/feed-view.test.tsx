@@ -1,7 +1,10 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { GridStateSnapshot, VirtuosoGridProps } from 'react-virtuoso';
 import type { OPDSFeed, OPDSPublication } from '@/types/opds';
 import { FeedView } from '@/app/opds/components/FeedView';
+
+const grid = vi.hoisted(() => ({ props: {} as VirtuosoGridProps<unknown> }));
 
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => (s: string) => s,
@@ -30,7 +33,10 @@ vi.mock('react-virtuoso', async () => {
   );
   return {
     Virtuoso: React.forwardRef(renderAll),
-    VirtuosoGrid: React.forwardRef(renderAll),
+    VirtuosoGrid: React.forwardRef((props: VirtuosoGridProps<unknown>, ref) => {
+      grid.props = props;
+      return renderAll(props as Parameters<typeof renderAll>[0], ref);
+    }),
   };
 });
 
@@ -115,5 +121,45 @@ describe('FeedView groups', () => {
 
     fireEvent.click(screen.getByText('Recent A'));
     expect(onPublicationSelect).toHaveBeenCalledWith(1, 0);
+  });
+});
+
+describe('FeedView browse position', () => {
+  afterEach(cleanup);
+
+  it('restores the complete measured grid state when returning to the same feed', () => {
+    const feed: OPDSFeed = {
+      metadata: { title: 'Catalog' },
+      links: [],
+      publications: [pub('Book')],
+    };
+    const snapshot: GridStateSnapshot = {
+      scrollTop: 2400,
+      viewport: { width: 800, height: 600 },
+      item: { width: 180, height: 290 },
+      gap: { column: 16, row: 16 },
+    };
+    renderFeed(feed);
+    expect(grid.props.stateChanged).toBeTypeOf('function');
+    grid.props.stateChanged?.(snapshot);
+    cleanup();
+    renderFeed(feed);
+    expect(grid.props.restoreStateFrom).toEqual(snapshot);
+    // Virtuoso seeds dimensions before its asynchronous scroll-to is applied.
+    // Leaving during that initialization must not replace the saved offset with zero.
+    grid.props.stateChanged?.({ ...snapshot, scrollTop: 0 });
+    cleanup();
+    renderFeed(feed);
+    expect(grid.props.restoreStateFrom).toEqual(snapshot);
+    grid.props.stateChanged?.(snapshot);
+    // Once restored, deliberately scrolling back to the top must be remembered.
+    grid.props.stateChanged?.({ ...snapshot, scrollTop: 0 });
+    cleanup();
+    renderFeed(feed);
+    expect(grid.props.restoreStateFrom?.scrollTop).toBe(0);
+    cleanup();
+    // A freshly fetched payload, even from the same URL, must not reuse stale measurements.
+    renderFeed({ metadata: { title: 'Catalog' }, links: [], publications: [pub('New book')] });
+    expect(grid.props.restoreStateFrom).toBeUndefined();
   });
 });

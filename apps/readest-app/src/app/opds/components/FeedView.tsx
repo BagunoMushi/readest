@@ -1,7 +1,7 @@
 'use client';
 
-import { useMemo, useCallback } from 'react';
-import { VirtuosoGrid } from 'react-virtuoso';
+import { useMemo, useCallback, useRef, useState } from 'react';
+import { VirtuosoGrid, type GridStateSnapshot } from 'react-virtuoso';
 import { IoAdd, IoChevronBack, IoChevronForward, IoFilter } from 'react-icons/io5';
 import { useTranslation } from '@/hooks/useTranslation';
 import { OPDSFeed, OPDSGenericLink } from '@/types/opds';
@@ -21,6 +21,11 @@ interface FeedViewProps {
   onAddCatalog?: () => void;
 }
 
+// History retains each parsed feed. Key by that object rather than its URL so a
+// refreshed response cannot inherit stale measurements, and discarded history
+// does not keep catalogs alive.
+const savedGridStates = new WeakMap<OPDSFeed, GridStateSnapshot>();
+
 const gridClassName = 'grid grid-cols-3 gap-4 px-4 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6';
 const navigationClassName =
   'grid grid-cols-2 gap-4 px-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 max-[450px]:grid-cols-1';
@@ -35,6 +40,22 @@ export function FeedView({
   onAddCatalog,
 }: FeedViewProps) {
   const _ = useTranslation();
+  // Capture once: stateChanged also fires while Virtuoso initializes/restores.
+  // Feeding those updates back into restoreStateFrom would restart restoration.
+  const [restoreState] = useState(() => savedGridStates.get(feed));
+  const restoring = useRef((restoreState?.scrollTop ?? 0) > 0);
+  const saveGridState = useCallback(
+    (snapshot: GridStateSnapshot) => {
+      if (snapshot.item.height === 0 || snapshot.viewport.height === 0) return;
+      // Dimensions arrive before the restored scroll event. Keep the old state
+      // if the user leaves again before that event, rather than saving the
+      // temporary zero offset. After restoration, scrolling to the top is valid.
+      if (restoring.current && snapshot.scrollTop === 0) return;
+      restoring.current = false;
+      savedGridStates.set(feed, snapshot);
+    },
+    [feed],
+  );
   const linksByRel = useMemo(() => groupByArray(feed.links, (link) => link.rel), [feed.links]);
 
   const pagination = useMemo(() => {
@@ -168,6 +189,8 @@ export function FeedView({
           {feed.publications && feed.publications.length > 0 && (
             <section className='opds-publications min-h-0 flex-1'>
               <VirtuosoGrid
+                restoreStateFrom={restoreState}
+                stateChanged={saveGridState}
                 style={{ height: '100%' }}
                 totalCount={feed.publications.length}
                 listClassName={gridClassName}

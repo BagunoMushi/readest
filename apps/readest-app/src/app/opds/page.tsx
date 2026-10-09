@@ -1183,6 +1183,8 @@ export default function BrowserPage() {
 
         {viewMode === 'feed' && state.feed && (
           <FeedView
+            // History can switch directly between two feeds without a loading view.
+            key={historyIndex}
             feed={state.feed}
             baseURL={state.baseURL}
             onNavigate={handleNavigate}
